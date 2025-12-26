@@ -15,9 +15,14 @@
 
 	let mapContainer: HTMLDivElement;
 	let map: any;
+	let maplibregl: any;
+	let startMarker: any;
+	let endMarker: any;
+	let pauseMarkers: any[] = [];
 
 	onMount(async () => {
-		const maplibregl = await import('maplibre-gl');
+		maplibregl = await import('maplibre-gl');
+		await import('maplibre-gl/dist/maplibre-gl.css');
 
 		// Calculate bounds
 		const lats = points.map((p) => p.lat);
@@ -63,35 +68,62 @@
 				}
 			});
 
-			// Add start marker
+			// Add start marker (green)
 			const startEl = document.createElement('div');
-			startEl.className = 'marker';
-			startEl.style.cssText =
-				'width: 12px; height: 12px; background: #10b981; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);';
+			startEl.className = 'marker-start';
+			startEl.innerHTML = `
+				<div style="
+					width: 28px;
+					height: 28px;
+					background: #10b981;
+					border-radius: 50%;
+					border: 3px solid white;
+					box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+					display: flex;
+					align-items: center;
+					justify-content: center;
+					font-size: 16px;
+				">🚴</div>
+			`;
 
-			new maplibregl.Marker({ element: startEl })
+			startMarker = new maplibregl.Marker({ element: startEl, anchor: 'center' })
 				.setLngLat([points[0].lon, points[0].lat])
+				.setPopup(new maplibregl.Popup({ offset: 25 }).setText('Start'))
 				.addTo(map);
 
-			// Add end marker
+			// Add end marker (red)
 			const endEl = document.createElement('div');
-			endEl.className = 'marker';
-			endEl.style.cssText =
-				'width: 12px; height: 12px; background: #ef4444; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);';
+			endEl.className = 'marker-end';
+			endEl.innerHTML = `
+				<div style="
+					width: 28px;
+					height: 28px;
+					background: #ef4444;
+					border-radius: 50%;
+					border: 3px solid white;
+					box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+					display: flex;
+					align-items: center;
+					justify-content: center;
+					font-size: 16px;
+				">🏁</div>
+			`;
 
-			new maplibregl.Marker({ element: endEl })
+			endMarker = new maplibregl.Marker({ element: endEl, anchor: 'center' })
 				.setLngLat([points[points.length - 1].lon, points[points.length - 1].lat])
+				.setPopup(new maplibregl.Popup({ offset: 25 }).setText('Finish'))
 				.addTo(map);
 
+			// Initial pause markers
 			updatePauseMarkers();
 		});
 
-		// Handle map clicks
+		// Handle map clicks for adding pauses
 		if (onPauseAdd && interactive) {
 			map.on('click', (e: any) => {
 				const { lng, lat } = e.lngLat;
 
-				// Calculate distance along route to clicked point
+				// Find closest point on route
 				let minDist = Infinity;
 				let closestDistance = 0;
 				let accumulated = 0;
@@ -109,36 +141,60 @@
 					if (i > 0) {
 						const dx = points[i].lat - points[i - 1].lat;
 						const dy = points[i].lon - points[i - 1].lon;
-						accumulated += Math.sqrt(dx * dx + dy * dy) * 111; // Rough km conversion
+						accumulated += Math.sqrt(dx * dx + dy * dy) * 111;
 					}
 				}
 
 				onPauseAdd(lat, lng, closestDistance);
 			});
 		}
+
+		return () => {
+			if (map) {
+				map.remove();
+			}
+		};
 	});
 
-	let pauseMarkers: any[] = [];
-
-	async function updatePauseMarkers() {
-		if (!map) return;
-
-		const maplibregl = await import('maplibre-gl');
+	function updatePauseMarkers() {
+		if (!map || !maplibregl) return;
 
 		// Remove old pause markers
 		pauseMarkers.forEach((marker) => marker.remove());
 		pauseMarkers = [];
 
-		// Add pause markers
-		pauses.forEach((pause) => {
+		// Add pause markers (amber/orange)
+		pauses.forEach((pause, index) => {
 			const el = document.createElement('div');
-			el.className = 'marker';
-			el.style.cssText =
-				'width: 12px; height: 12px; background: #f59e0b; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);';
+			el.className = 'marker-pause';
+			el.innerHTML = `
+				<div style="
+					width: 24px;
+					height: 24px;
+					background: #f59e0b;
+					border-radius: 50%;
+					border: 3px solid white;
+					box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+					display: flex;
+					align-items: center;
+					justify-content: center;
+					font-size: 12px;
+					font-weight: bold;
+					color: white;
+				">${index + 1}</div>
+			`;
 
-			const marker = new maplibregl.Marker({ element: el })
+			const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
 				.setLngLat([pause.point.lon, pause.point.lat])
-				.setPopup(new maplibregl.Popup().setText(`Pause: ${pause.durationMinutes} min`))
+				.setPopup(
+					new maplibregl.Popup({ offset: 25 }).setHTML(
+						`<div style="font-size: 12px;">
+							<strong>Pause ${index + 1}</strong><br/>
+							${pause.distanceKm.toFixed(1)} km<br/>
+							${pause.durationMinutes} min
+						</div>`
+					)
+				)
 				.addTo(map);
 
 			pauseMarkers.push(marker);
@@ -147,7 +203,7 @@
 
 	// Update pause markers when pauses change
 	$effect(() => {
-		if (pauses && map) {
+		if (pauses && map && maplibregl) {
 			updatePauseMarkers();
 		}
 	});
@@ -158,5 +214,18 @@
 <style>
 	:global(.maplibregl-map) {
 		font-family: inherit;
+	}
+
+	:global(.marker-start),
+	:global(.marker-end),
+	:global(.marker-pause) {
+		cursor: pointer;
+		transition: transform 0.2s;
+	}
+
+	:global(.marker-start:hover),
+	:global(.marker-end:hover),
+	:global(.marker-pause:hover) {
+		transform: scale(1.15);
 	}
 </style>

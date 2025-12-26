@@ -49,6 +49,9 @@
 	let showTimeline = $state(false);
 	let showWeather = $state(false);
 
+	// Track when we last analyzed to prevent duplicate calls
+	let lastAnalyzedKey = $state<string | null>(null);
+
 	// Derived state
 	let tripStartDateTime = $derived(
 		startDate && startTime ? new Date(`${startDate}T${startTime}`) : null
@@ -161,9 +164,23 @@
 		saving = false;
 	}
 
+	// Debounced effect - only run when meaningful data changes
 	$effect(() => {
-		if (gpxData && tripStartDateTime && !loading) {
-			analyzeTrip();
+		if (!gpxData || !tripStartDateTime || loading) return;
+
+		// Create a key that represents the current analysis state
+		const analysisKey = `${tripStartDateTime.toISOString()}_${pauses.length}_${pauses.map((p) => `${p.distanceKm}_${p.durationMinutes}`).join('_')}`;
+
+		// Only analyze if the key has changed
+		if (analysisKey !== lastAnalyzedKey) {
+			lastAnalyzedKey = analysisKey;
+
+			// Use a timeout to debounce rapid changes
+			const timeoutId = setTimeout(() => {
+				analyzeTrip();
+			}, 500);
+
+			return () => clearTimeout(timeoutId);
 		}
 	});
 </script>
@@ -245,7 +262,7 @@
 				{#if sunTimes && tripStartDateTime && tripEndTime}
 					<div class="card bg-base-100 border-base-300 border">
 						<div class="card-body p-4">
-							<h2 class="card-title mb-2 text-base md:text-lg">Sun Timeline</h2>
+							<h2 class="card-title mb-2 text-base md:text-lg">Sunrise & Sunset</h2>
 							<SunChart {sunTimes} tripStart={tripStartDateTime} tripEnd={tripEndTime} {segments} />
 						</div>
 					</div>
