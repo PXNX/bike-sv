@@ -1,0 +1,85 @@
+// src/hooks.server.ts
+import { TokenBucket } from '$lib/server/rate-limit';
+import { sequence } from '@sveltejs/kit/hooks';
+import { validateSessionToken } from '$lib/server/auth';
+import type { HandleServerError } from '@sveltejs/kit';
+//import { paraglideMiddleware } from '$lib/paraglide/server';
+import { error, type Handle } from '@sveltejs/kit';
+//import '@valibot/i18n/de/schema';
+
+const bucket = new TokenBucket<string>(100, 1);
+
+const rateLimitHandle: Handle = async ({ event, resolve }) => {
+	// Note: Assumes X-Forwarded-For will always be defined.
+	const clientIP = event.request.headers.get('X-Forwarded-For');
+	if (clientIP === null) {
+		return resolve(event);
+	}
+	let cost: number;
+	if (event.request.method === 'GET' || event.request.method === 'OPTIONS') {
+		cost = 1;
+	} else {
+		cost = 3;
+	}
+	if (!bucket.consume(clientIP, cost)) {
+		throw error(429, 'Too many requests');
+	}
+	return resolve(event);
+};
+
+const authHandle: Handle = async ({ event, resolve }) => {
+	console.log('🔍 Session - Checking session');
+	const sessionToken = event.cookies.get('session');
+
+	if (!sessionToken) {
+		event.locals.user = null;
+		event.locals.session = null;
+		return resolve(event);
+	}
+
+	const result = await validateSessionToken(sessionToken);
+
+	if (!result) {
+		event.locals.user = null;
+		event.locals.session = null;
+		event.cookies.delete('session', { path: '/' });
+		return resolve(event);
+	}
+
+	event.locals.user = result.user;
+	event.locals.session = result.session;
+
+	return resolve(event);
+};
+
+export const handleError: HandleServerError = async ({ error, event }) => {
+	const errorId = crypto.randomUUID();
+
+	// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+	//@ts-ignore
+	event.locals.error = error?.toString() || undefined;
+	// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+	//@ts-ignore
+	event.locals.errorStackTrace = error?.stack || undefined;
+	event.locals.errorId = errorId;
+	console.log(500, event);
+	//log(500, event);
+	return {
+		message: 'An unexpected error occurred.',
+		errorId
+	};
+};
+
+/*
+// creating a handle to use the paraglide middleware
+const paraglideHandle: Handle = ({ event, resolve }) =>
+	paraglideMiddleware(event.request, ({ request: localizedRequest, locale }) => {
+		event.request = localizedRequest;
+		return resolve(event, {
+			transformPageChunk: ({ html }) => {
+				return html.replace('%lang%', locale);
+			}
+		});
+	})*/
+
+export const handle = sequence(rateLimitHandle, authHandle);
