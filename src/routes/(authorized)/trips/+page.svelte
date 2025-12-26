@@ -1,49 +1,55 @@
 <!-- src/routes/trips/+page.svelte -->
 <script lang="ts">
-	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { parseGPX, interpolatePointAtDistance, type TrackPoint } from '$lib/utils/gpx';
-	import {
-		calculateTripSegments,
-		formatTime,
-		formatDuration,
-		type Pause,
-		type TripSegment
-	} from '$lib/utils/calculator';
+	import { calculateTripSegments, type Pause, type TripSegment } from '$lib/utils/calculator';
 	import {
 		fetchWeatherForPoint,
 		fetchSunTimes,
-		getWeatherDescription,
 		type WeatherData,
 		type SunTimes
 	} from '$lib/utils/weather';
 	import { getClothingRecommendations, type ClothingRecommendation } from '$lib/utils/clothing';
+
+	import TripUploadForm from '$lib/components/TripUploadForm.svelte';
 	import TripMap from '$lib/components/TripMap.svelte';
 	import SunChart from '$lib/components/SunChart.svelte';
-	import IconUpload from '~icons/fluent/arrow-upload-20-regular';
-	import IconSave from '~icons/fluent/save-20-regular';
-	import IconShare from '~icons/fluent/share-20-regular';
-	import IconDelete from '~icons/fluent/delete-20-regular';
-	import FluentEmojiTShirt from '~icons/fluent-emoji/t-shirt';
+	import PauseList from '$lib/components/PauseList.svelte';
+	import ClothingRecommendations from '$lib/components/ClothingRecommendations.svelte';
+	import TripTimeline from '$lib/components/TripTimeline.svelte';
+	import WeatherForecast from '$lib/components/WeatherForecast.svelte';
+	import SavedTripsList from '$lib/components/SavedTripsList.svelte';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
+	// Form state
 	let gpxFile: File | null = $state(null);
 	let tripName = $state('');
 	let startTime = $state('');
 	let startDate = $state('');
 	let isPublic = $state(false);
 
+	// Trip data
 	let gpxData: { points: TrackPoint[]; totalDistanceKm: number } | null = $state(null);
 	let pauses: Pause[] = $state([]);
 	let segments: TripSegment[] = $state([]);
 	let weatherData: WeatherData[] = $state([]);
 	let sunTimes: SunTimes | null = $state(null);
 	let clothingRecs: ClothingRecommendation[] = $state([]);
+
+	// UI state
 	let loading = $state(false);
 	let saving = $state(false);
+	let showPauses = $state(true);
+	let showTrips = $state(false);
+	let showClothing = $state(true);
+	let showTimeline = $state(false);
+	let showWeather = $state(false);
 
+	// Derived state
 	let tripStartDateTime = $derived(
 		startDate && startTime ? new Date(`${startDate}T${startTime}`) : null
 	);
@@ -59,7 +65,6 @@
 		const parsed = parseGPX(text);
 		gpxData = parsed;
 
-		// Set default name and date/time
 		tripName = file.name.replace('.gpx', '');
 		const now = new Date();
 		startDate = now.toISOString().split('T')[0];
@@ -70,15 +75,7 @@
 		if (!gpxData) return;
 
 		const point = interpolatePointAtDistance(gpxData.points, distanceKm) || { lat, lon };
-
-		pauses = [
-			...pauses,
-			{
-				distanceKm,
-				durationMinutes: 15,
-				point
-			}
-		];
+		pauses = [...pauses, { distanceKm, durationMinutes: 15, point }];
 	}
 
 	function removePause(index: number) {
@@ -111,6 +108,7 @@
 				tripStartDateTime,
 				endTime
 			);
+
 			sunTimes = await fetchSunTimes(midPoint.lat, midPoint.lon, tripStartDateTime);
 
 			if (sunTimes && weatherData.length > 0) {
@@ -163,17 +161,6 @@
 		saving = false;
 	}
 
-	function loadTrip(trip: any) {
-		tripName = trip.name;
-		const parsed = parseGPX(trip.gpxData);
-		gpxData = parsed;
-
-		const startDt = new Date(trip.startTime);
-		startDate = startDt.toISOString().split('T')[0];
-		startTime = startDt.toTimeString().slice(0, 5);
-		isPublic = trip.isPublic === 1;
-	}
-
 	$effect(() => {
 		if (gpxData && tripStartDateTime && !loading) {
 			analyzeTrip();
@@ -185,254 +172,111 @@
 	<title>Bike Trip Weather Analyzer</title>
 </svelte:head>
 
-<div class="container mx-auto max-w-7xl p-6">
-	<div class="mb-8 flex items-center justify-between">
-		<h1 class="text-3xl font-bold">Bike Trip Weather Analyzer</h1>
-	</div>
-
-	<div class="grid gap-6 lg:grid-cols-3">
-		<div class="space-y-4 lg:col-span-1">
-			<div class="card bg-base-100 border-base-300 border">
-				<div class="card-body">
-					<h2 class="card-title text-lg">Trip Details</h2>
-
-					<div class="form-control">
-						<label class="label">
-							<span class="label-text">GPX File</span>
-						</label>
-						<input
-							type="file"
-							accept=".gpx"
-							onchange={handleFileUpload}
-							class="file-input file-input-bordered w-full"
-						/>
-					</div>
-
-					{#if gpxData}
-						<div class="form-control">
-							<label class="label">
-								<span class="label-text">Trip Name</span>
-							</label>
-							<input
-								type="text"
-								bind:value={tripName}
-								class="input input-bordered"
-								placeholder="My bike trip"
-							/>
-						</div>
-
-						<div class="form-control">
-							<label class="label">
-								<span class="label-text">Start Date</span>
-							</label>
-							<input type="date" bind:value={startDate} class="input input-bordered" />
-						</div>
-
-						<div class="form-control">
-							<label class="label">
-								<span class="label-text">Start Time</span>
-							</label>
-							<input type="time" bind:value={startTime} class="input input-bordered" />
-						</div>
-
-						<div class="form-control">
-							<label class="label cursor-pointer">
-								<span class="label-text">Make trip public (shareable link)</span>
-								<input type="checkbox" bind:checked={isPublic} class="checkbox" />
-							</label>
-						</div>
-
-						<button
-							onclick={saveTrip}
-							disabled={saving || !tripName}
-							class="btn btn-primary w-full"
-						>
-							<IconSave />
-							{saving ? 'Saving...' : 'Save Trip'}
-						</button>
-
-						<div class="divider"></div>
-
-						<div class="space-y-2 text-sm">
-							<p><strong>Distance:</strong> {gpxData.totalDistanceKm.toFixed(1)} km</p>
-							<p><strong>Points:</strong> {gpxData.points.length}</p>
-						</div>
-					{/if}
-				</div>
-			</div>
-
-			{#if gpxData}
-				<div class="card bg-base-100 border-base-300 border">
-					<div class="card-body">
-						<h2 class="card-title text-lg">Pauses</h2>
-						<p class="text-sm opacity-70">Click on the map to add pauses</p>
-
-						{#if pauses.length === 0}
-							<p class="text-sm opacity-50">No pauses added yet</p>
-						{:else}
-							<div class="space-y-2">
-								{#each pauses as pause, i}
-									<div class="border-base-300 flex items-center gap-2 rounded border p-2">
-										<div class="flex-1">
-											<div class="text-sm font-medium">{pause.distanceKm.toFixed(1)} km</div>
-											<input
-												type="number"
-												value={pause.durationMinutes}
-												oninput={(e) =>
-													updatePauseDuration(i, parseInt((e.target as HTMLInputElement).value))}
-												class="input input-xs input-bordered mt-1 w-20"
-												min="1"
-											/>
-											<span class="ml-1 text-xs">min</span>
-										</div>
-										<button onclick={() => removePause(i)} class="btn btn-ghost btn-sm btn-square">
-											<IconDelete />
-										</button>
-									</div>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				</div>
-			{/if}
-
-			{#if data.trips.length > 0}
-				<div class="card bg-base-100 border-base-300 border">
-					<div class="card-body">
-						<h2 class="card-title text-lg">Your Trips</h2>
-						<div class="space-y-2">
-							{#each data.trips as trip}
-								<button
-									onclick={() => goto(`/trips/${trip.id}`)}
-									class="btn btn-sm btn-ghost w-full justify-start"
-								>
-									{trip.name}
-								</button>
-							{/each}
-						</div>
-					</div>
-				</div>
-			{/if}
+<div class="bg-base-200 min-h-screen">
+	<div class="pb-safe container mx-auto max-w-7xl p-4 md:p-6">
+		<div class="mb-6 flex items-center justify-between md:mb-8">
+			<h1 class="text-2xl font-bold md:text-3xl">Bike Trip Analyzer</h1>
 		</div>
 
-		<div class="space-y-6 lg:col-span-2">
-			{#if gpxData}
+		{#if !gpxData}
+			<!-- Upload State -->
+			<div class="space-y-4">
+				<TripUploadForm
+					{gpxData}
+					{tripName}
+					{startDate}
+					{startTime}
+					{isPublic}
+					{saving}
+					onNameChange={(name) => (tripName = name)}
+					onDateChange={(date) => (startDate = date)}
+					onTimeChange={(time) => (startTime = time)}
+					onPublicChange={(pub) => (isPublic = pub)}
+					onSave={saveTrip}
+					onFileUpload={handleFileUpload}
+				/>
+
+				<SavedTripsList
+					trips={data.trips}
+					expanded={showTrips}
+					onToggle={() => (showTrips = !showTrips)}
+					onTripClick={(id) => goto(`/trips/${id}`)}
+				/>
+
+				<EmptyState />
+			</div>
+		{:else}
+			<!-- Trip Loaded State -->
+			<div class="space-y-4">
+				<TripUploadForm
+					{gpxData}
+					{tripName}
+					{startDate}
+					{startTime}
+					{isPublic}
+					{saving}
+					onNameChange={(name) => (tripName = name)}
+					onDateChange={(date) => (startDate = date)}
+					onTimeChange={(time) => (startTime = time)}
+					onPublicChange={(pub) => (isPublic = pub)}
+					onSave={saveTrip}
+					onFileUpload={handleFileUpload}
+				/>
+
+				<!-- Map Card -->
 				<div class="card bg-base-100 border-base-300 border">
-					<div class="card-body">
-						<h2 class="card-title text-lg">Route Map</h2>
-						<TripMap points={gpxData.points} {pauses} onPauseAdd={addPause} />
+					<div class="card-body p-4">
+						<h2 class="card-title mb-2 text-base md:text-lg">Route Map</h2>
+						<p class="mb-2 text-xs opacity-70">Tap map to add pauses</p>
+						<div class="h-[300px] md:h-[400px]">
+							<TripMap points={gpxData.points} {pauses} onPauseAdd={addPause} />
+						</div>
 					</div>
 				</div>
+
+				<PauseList
+					{pauses}
+					expanded={showPauses}
+					onToggle={() => (showPauses = !showPauses)}
+					onRemove={removePause}
+					onUpdateDuration={updatePauseDuration}
+				/>
 
 				{#if sunTimes && tripStartDateTime && tripEndTime}
 					<div class="card bg-base-100 border-base-300 border">
-						<div class="card-body">
-							<h2 class="card-title text-lg">Sun Timeline</h2>
+						<div class="card-body p-4">
+							<h2 class="card-title mb-2 text-base md:text-lg">Sun Timeline</h2>
 							<SunChart {sunTimes} tripStart={tripStartDateTime} tripEnd={tripEndTime} {segments} />
 						</div>
 					</div>
 				{/if}
 
 				{#if clothingRecs.length > 0}
-					<div class="card bg-base-100 border-base-300 border">
-						<div class="card-body">
-							<h2 class="card-title text-lg">
-								<FluentEmojiTShirt />
-								Clothing Recommendations
-							</h2>
-
-							<div class="space-y-4">
-								{#each clothingRecs as rec}
-									<div
-										class:alert={rec.category === 'Safety Warnings'}
-										class:alert-warning={rec.category === 'Safety Warnings'}
-									>
-										<h3 class="mb-2 font-semibold">{rec.category}</h3>
-										<p class="mb-2 text-sm opacity-70">{rec.reason}</p>
-										<ul class="list-inside list-disc space-y-1">
-											{#each rec.items as item}
-												<li class="text-sm">{item}</li>
-											{/each}
-										</ul>
-									</div>
-								{/each}
-							</div>
-						</div>
-					</div>
+					<ClothingRecommendations
+						recommendations={clothingRecs}
+						expanded={showClothing}
+						onToggle={() => (showClothing = !showClothing)}
+					/>
 				{/if}
 
 				{#if segments.length > 0}
-					<div class="card bg-base-100 border-base-300 border">
-						<div class="card-body">
-							<h2 class="card-title text-lg">Trip Timeline</h2>
-
-							<div class="overflow-x-auto">
-								<table class="table">
-									<thead>
-										<tr>
-											<th>Distance</th>
-											<th>Time</th>
-											<th>Duration</th>
-										</tr>
-									</thead>
-									<tbody>
-										<tr>
-											<td>0.0 km</td>
-											<td>{formatTime(tripStartDateTime!)}</td>
-											<td>Start</td>
-										</tr>
-										{#each segments as segment, i}
-											<tr>
-												<td>{segment.distanceKm.toFixed(1)} km</td>
-												<td>{formatTime(segment.endTime)}</td>
-												<td>
-													{#if i < pauses.length}
-														Pause ({pauses[i].durationMinutes} min)
-													{:else}
-														End
-													{/if}
-												</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
-						</div>
-					</div>
+					<TripTimeline
+						{segments}
+						{pauses}
+						tripStart={tripStartDateTime!}
+						expanded={showTimeline}
+						onToggle={() => (showTimeline = !showTimeline)}
+					/>
 				{/if}
 
 				{#if weatherData.length > 0}
-					<div class="card bg-base-100 border-base-300 border">
-						<div class="card-body">
-							<h2 class="card-title text-lg">Weather Forecast</h2>
-
-							<div class="grid gap-4 sm:grid-cols-2">
-								{#each weatherData as weather}
-									<div class="border-base-300 rounded border p-3">
-										<div class="mb-2 font-medium">{formatTime(weather.time)}</div>
-										<div class="mb-1 text-2xl font-bold">{weather.temperature.toFixed(1)}°C</div>
-										<div class="space-y-1 text-sm">
-											<div>{getWeatherDescription(weather.weatherCode)}</div>
-											<div>Wind: {weather.windSpeed.toFixed(1)} km/h</div>
-											{#if weather.precipitation > 0}
-												<div>Rain: {weather.precipitation.toFixed(1)} mm</div>
-											{/if}
-										</div>
-									</div>
-								{/each}
-							</div>
-						</div>
-					</div>
+					<WeatherForecast
+						{weatherData}
+						expanded={showWeather}
+						onToggle={() => (showWeather = !showWeather)}
+					/>
 				{/if}
-			{:else}
-				<div class="card bg-base-100 border-base-300 border">
-					<div class="card-body items-center py-20 text-center">
-						<IconUpload class="mb-4 text-6xl opacity-30" />
-						<h3 class="mb-2 text-xl font-semibold">Upload a GPX File</h3>
-						<p class="opacity-70">Get started by uploading your bike trip GPX file</p>
-					</div>
-				</div>
-			{/if}
-		</div>
+			</div>
+		{/if}
 	</div>
 </div>

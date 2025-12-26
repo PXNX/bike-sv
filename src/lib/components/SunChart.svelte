@@ -2,6 +2,7 @@
 <script lang="ts">
 	import type { SunTimes } from '$lib/utils/weather';
 	import type { TripSegment } from '$lib/utils/calculator';
+	import { SvelteDate } from 'svelte/reactivity';
 
 	interface Props {
 		sunTimes: SunTimes;
@@ -17,9 +18,9 @@
 	const PADDING = 40;
 
 	let chartData = $derived.by(() => {
-		const dayStart = new Date(tripStart);
+		const dayStart = new SvelteDate(tripStart);
 		dayStart.setHours(0, 0, 0, 0);
-		const dayEnd = new Date(dayStart);
+		const dayEnd = new SvelteDate(dayStart);
 		dayEnd.setHours(23, 59, 59, 999);
 
 		const totalMs = dayEnd.getTime() - dayStart.getTime();
@@ -44,7 +45,7 @@
 		// Time labels
 		const hours = [];
 		for (let h = 0; h <= 24; h += 3) {
-			const time = new Date(dayStart);
+			const time = new SvelteDate(dayStart);
 			time.setHours(h);
 			hours.push({
 				x: getX(time),
