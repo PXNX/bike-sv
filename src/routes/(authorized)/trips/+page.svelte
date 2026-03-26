@@ -1,4 +1,4 @@
-<!-- src/routes/trips/+page.svelte -->
+<!-- src/routes/trips/+page.svelte - Debug Version -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { parseGPX, interpolatePointAtDistance, type TrackPoint } from '$lib/utils/gpx';
@@ -48,6 +48,7 @@
 	let showClothing = $state(true);
 	let showTimeline = $state(false);
 	let showWeather = $state(false);
+	let errorMessage = $state('');
 
 	// Track when we last analyzed to prevent duplicate calls
 	let lastAnalyzedKey = $state<string | null>(null);
@@ -90,41 +91,73 @@
 	}
 
 	async function analyzeTrip() {
-		if (!gpxData || !tripStartDateTime) return;
+		if (!gpxData || !tripStartDateTime) {
+			console.log('Cannot analyze: missing data', { gpxData: !!gpxData, tripStartDateTime });
+			return;
+		}
 
 		loading = true;
+		errorMessage = '';
 
 		try {
-			segments = calculateTripSegments(
+			console.log('Starting analysis with:', {
+				points: gpxData.points.length,
+				totalDistance: gpxData.totalDistanceKm,
+				startTime: tripStartDateTime,
+				pausesCount: pauses.length
+			});
+
+			console.log('Calculating segments...');
+			const calculatedSegments = calculateTripSegments(
 				gpxData.points,
 				gpxData.totalDistanceKm,
 				tripStartDateTime,
 				pauses
 			);
+			console.log('Segments calculated:', calculatedSegments);
+
+			if (!calculatedSegments || calculatedSegments.length === 0) {
+				throw new Error('No segments were calculated. Check calculateTripSegments function.');
+			}
+
+			segments = calculatedSegments;
 
 			const midPoint = gpxData.points[Math.floor(gpxData.points.length / 2)];
 			const endTime = segments[segments.length - 1].endTime;
 
-			weatherData = await fetchWeatherForPoint(
+			console.log('Midpoint:', midPoint, 'EndTime:', endTime);
+
+			console.log('Fetching weather data...');
+			const fetchedWeather = await fetchWeatherForPoint(
 				midPoint.lat,
 				midPoint.lon,
 				tripStartDateTime,
 				endTime
 			);
+			console.log('Weather data fetched:', fetchedWeather);
+			weatherData = fetchedWeather;
 
-			sunTimes = await fetchSunTimes(midPoint.lat, midPoint.lon, tripStartDateTime);
+			console.log('Fetching sun times...');
+			const fetchedSunTimes = await fetchSunTimes(midPoint.lat, midPoint.lon, tripStartDateTime);
+			console.log('Sun times fetched:', fetchedSunTimes);
+			sunTimes = fetchedSunTimes;
 
 			if (sunTimes && weatherData.length > 0) {
-				clothingRecs = getClothingRecommendations(
-					weatherData,
-					sunTimes,
-					tripStartDateTime,
-					endTime
-				);
+				console.log('Getting clothing recommendations...');
+				const recs = getClothingRecommendations(weatherData, sunTimes, tripStartDateTime, endTime);
+				console.log('Clothing recs:', recs);
+				clothingRecs = recs;
+			} else {
+				console.log('Skipping clothing recs:', {
+					hasSunTimes: !!sunTimes,
+					weatherCount: weatherData.length
+				});
 			}
+
+			console.log('Analysis complete!');
 		} catch (err) {
 			console.error('Error analyzing trip:', err);
-			alert('Error fetching weather data');
+			errorMessage = err instanceof Error ? `${err.message}\n${err.stack}` : 'Error analyzing trip';
 		} finally {
 			loading = false;
 		}
@@ -164,23 +197,52 @@
 		saving = false;
 	}
 
-	// Debounced effect - only run when meaningful data changes
+	// Effect to trigger analysis when data changes
 	$effect(() => {
-		if (!gpxData || !tripStartDateTime || loading) return;
+		if (!gpxData || !tripStartDateTime) {
+			console.log('Effect: Waiting for data...', {
+				hasGpx: !!gpxData,
+				hasDateTime: !!tripStartDateTime
+			});
+			return;
+		}
+
+		if (loading) {
+			console.log('Effect: Already loading, skipping...');
+			return;
+		}
 
 		// Create a key that represents the current analysis state
 		const analysisKey = `${tripStartDateTime.toISOString()}_${pauses.length}_${pauses.map((p) => `${p.distanceKm}_${p.durationMinutes}`).join('_')}`;
+
+		console.log('Effect: Checking if analysis needed...', {
+			newKey: analysisKey,
+			oldKey: lastAnalyzedKey,
+			needsAnalysis: analysisKey !== lastAnalyzedKey
+		});
 
 		// Only analyze if the key has changed
 		if (analysisKey !== lastAnalyzedKey) {
 			lastAnalyzedKey = analysisKey;
 
-			// Use a timeout to debounce rapid changes
-			const timeoutId = setTimeout(() => {
-				analyzeTrip();
-			}, 500);
+			// For pause changes, debounce; for initial load, run immediately
+			if (pauses.length > 0 && segments.length > 0) {
+				console.log('Effect: Debouncing for pause change...');
+				const timeoutId = setTimeout(() => {
+					console.log('Effect: Debounce complete, calling analyzeTrip()');
+					analyzeTrip();
+				}, 500);
 
-			return () => clearTimeout(timeoutId);
+				return () => {
+					console.log('Effect: Cleanup - clearing timeout');
+					clearTimeout(timeoutId);
+				};
+			} else {
+				console.log('Effect: Running analysis immediately (initial load)');
+				analyzeTrip();
+			}
+		} else {
+			console.log('Effect: Analysis key unchanged, skipping');
 		}
 	});
 </script>
@@ -251,6 +313,61 @@
 					</div>
 				</div>
 
+				<!-- Manual Analyze Button (for debugging) -->
+				<div class="card bg-base-100 border-base-300 border">
+					<div class="card-body p-4">
+						<button
+							class="btn btn-primary"
+							onclick={() => {
+								console.log('Manual analyze button clicked');
+								analyzeTrip();
+							}}
+							disabled={loading}
+						>
+							{loading ? 'Analyzing...' : 'Analyze Trip (Manual)'}
+						</button>
+					</div>
+				</div>
+
+				{#if loading}
+					<div class="card bg-base-100 border-base-300 border">
+						<div class="card-body p-8 text-center">
+							<div class="loading loading-spinner loading-lg mx-auto"></div>
+							<p class="mt-4 text-sm opacity-70">Analyzing trip and fetching weather data...</p>
+						</div>
+					</div>
+				{/if}
+
+				{#if errorMessage}
+					<div class="alert alert-error">
+						<span>{errorMessage}</span>
+					</div>
+				{/if}
+
+				<!-- Debug Info -->
+				<div class="card bg-base-100 border-base-300 border">
+					<div class="card-body p-4">
+						<h3 class="font-bold">Debug Info:</h3>
+						<pre class="overflow-auto text-xs">{JSON.stringify(
+								{
+									hasGpxData: !!gpxData,
+									pointsCount: gpxData?.points.length,
+									hasTripStartDateTime: !!tripStartDateTime,
+									pausesCount: pauses.length,
+									segmentsCount: segments.length,
+									weatherDataCount: weatherData.length,
+									hasSunTimes: !!sunTimes,
+									clothingRecsCount: clothingRecs.length,
+									loading,
+									tripEndTime: tripEndTime?.toISOString(),
+									lastAnalyzedKey
+								},
+								null,
+								2
+							)}</pre>
+					</div>
+				</div>
+
 				<PauseList
 					{pauses}
 					expanded={showPauses}
@@ -262,8 +379,13 @@
 				{#if sunTimes && tripStartDateTime && tripEndTime}
 					<div class="card bg-base-100 border-base-300 border">
 						<div class="card-body p-4">
-							<h2 class="card-title mb-2 text-base md:text-lg">Sunrise & Sunset</h2>
 							<SunChart {sunTimes} tripStart={tripStartDateTime} tripEnd={tripEndTime} {segments} />
+						</div>
+					</div>
+				{:else}
+					<div class="card bg-base-100 border-base-300 border">
+						<div class="card-body p-4">
+							<p class="text-sm opacity-70">Sun chart will appear after analysis completes</p>
 						</div>
 					</div>
 				{/if}
@@ -274,6 +396,12 @@
 						expanded={showClothing}
 						onToggle={() => (showClothing = !showClothing)}
 					/>
+				{:else}
+					<div class="card bg-base-100 border-base-300 border">
+						<div class="card-body p-4">
+							<p class="text-sm opacity-70">Clothing recommendations will appear after analysis</p>
+						</div>
+					</div>
 				{/if}
 
 				{#if segments.length > 0}
@@ -284,6 +412,12 @@
 						expanded={showTimeline}
 						onToggle={() => (showTimeline = !showTimeline)}
 					/>
+				{:else}
+					<div class="card bg-base-100 border-base-300 border">
+						<div class="card-body p-4">
+							<p class="text-sm opacity-70">Timeline will appear after analysis completes</p>
+						</div>
+					</div>
 				{/if}
 
 				{#if weatherData.length > 0}
@@ -292,6 +426,12 @@
 						expanded={showWeather}
 						onToggle={() => (showWeather = !showWeather)}
 					/>
+				{:else}
+					<div class="card bg-base-100 border-base-300 border">
+						<div class="card-body p-4">
+							<p class="text-sm opacity-70">Weather forecast will appear after analysis</p>
+						</div>
+					</div>
 				{/if}
 			</div>
 		{/if}
